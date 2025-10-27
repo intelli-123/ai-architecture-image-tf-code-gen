@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Architecture to IaC Tool</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(to right, #eef2f3, #8e9eab);
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 28px;
+    }
+
+    .card {
+      background-color: #fff;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 600px;
+      text-align: center;
+    }
+
+    input[type="file"] {
+      margin: 20px 0;
+      font-size: 16px;
+    }
+
+    button {
+      background-color: #0078d4;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #005fa3;
+    }
+
+    #uploadedImage {
+      max-width: 100%;
+      height: auto;
+      margin-top: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      display: none;
+    }
+
+    #response {
+      margin-top: 30px;
+      background-color: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      white-space: pre-wrap;
+      font-family: monospace;
+      display: none;
+    }
+
+    .loader {
+      display: none;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>AI Architecture to IaC Tool</h1>
+  <div class="card">
+    <form id="uploadForm" enctype="multipart/form-data">
+      <p>Select an architecture diagram image to extract cloud components:</p>
+      <input type="file" name="diagram" accept="image/*" />
+      <button type="submit">Upload Diagram</button>
+    </form>
+
+    <div class="loader" id="loader">⏳ Processing image...</div>
+    <img id="uploadedImage" alt="Uploaded Diagram" />
+    <pre id="response"></pre>
+  </div>
+
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      const fileInput = e.target.querySelector('input[type="file"]');
+      const file = fileInput.files[0];
+
+      if (!file) return;
+
+      // Show loader
+      document.getElementById('loader').style.display = 'block';
+      document.getElementById('response').style.display = 'none';
+      document.getElementById('uploadedImage').style.display = 'none';
+
+      try {
+        const res = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const terraformCode = await res.text();
+
+        // Hide loader
+        document.getElementById('loader').style.display = 'none';
+
+        // Show image preview
+        const imageUrl = URL.createObjectURL(file);
+        const imgElement = document.getElementById('uploadedImage');
+        imgElement.src = imageUrl;
+        imgElement.style.display = 'block';
+
+        // Show Terraform code
+        const responseElement = document.getElementById('response');
+        responseElement.textContent = terraformCode;
+        responseElement.style.display = 'block';
+      } catch (error) {
+        console.error('Upload failed:', error);
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('response').textContent = '❌ Failed to process image.';
+        document.getElementById('response').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
