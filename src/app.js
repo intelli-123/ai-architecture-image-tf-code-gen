@@ -1,3 +1,4 @@
+//src\app.js
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -5,8 +6,13 @@ const fs = require('fs');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { editTerraformCode } = require('../services/geminiEditorAgent');
+
+const { execFile } = require('child_process');
 
 dotenv.config();
+
+let lastGeneratedCode = '';
 
 const app = express();
 app.use(cors());
@@ -53,6 +59,7 @@ Only return valid JSON. Do not include explanations or markdown.
 
   const response = await result.response;
   return response.text();
+  
 }
 
 async function generateTerraformFromJson(jsonString) {
@@ -103,127 +110,73 @@ app.post('/upload', upload.single('diagram'), async (req, res) => {
     fs.writeFileSync(tfFilePath, terraformCode);
     console.log('[DEBUG] Terraform code saved to:', tfFilePath);
 
+    lastGeneratedCode = terraformCode;
     res.type('text/plain').send(terraformCode);
 
   } catch (err) {
     console.error('[ERROR] Failed to process image or generate Terraform code:', err);
     res.status(500).send('Error generating Terraform code');
   }
+
+});
+
+app.post('/edit', express.json(), async (req, res) => {
+  const { instruction } = req.body;
+  try {
+    const updatedCode = await editTerraformCode(lastGeneratedCode, instruction);
+    lastGeneratedCode = updatedCode;
+    res.type('text/plain').send(updatedCode);
+  } catch (err) {
+    console.error('[ERROR] Editing failed:', err);
+    res.status(500).send('Failed to edit code');
+  }
+});
+
+// app.get('/lint', async (req, res) => {
+//   const tfFilePath = path.join(__dirname, '../public/generated/generated_from_diagram.tf');
+//   exec(`tflint ${tfFilePath}`, (error, stdout, stderr) => {
+//     if (error) {
+//       console.error('[ERROR] TFLint failed:', stderr);
+//       return res.status(500).send('Linting failed');
+//     }
+//     res.type('text/plain').send(stdout);
+//   });
+// });
+
+
+
+app.get('/lint', async (req, res) => {
+  try {
+    const moduleDir = path.join(__dirname, '../public/generated');
+    const tfFilename = 'generated_from_diagram.tf';
+
+    // Initialize plugins once per container/host (cache will persist). You can
+    // also do this in a build step instead of on each request.
+    // execFile('tflint', ['--chdir', moduleDir, '--init'], (err) => { ... })
+
+    const args = [
+      '--chdir', moduleDir,    // new way to set working directory (v0.47+)
+      '--format', 'json',      // or 'json' if you prefer
+      '--filter', tfFilename,  // only report issues for this file
+    ];
+
+    execFile('tflint', args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        // TFLint returns non‑zero when it finds issues; decide what your API should return.
+        // If you treat "issues found" as success, you can still return 200 with stdout.
+        // Here we treat CLI errors (not lint findings) as 500.
+        const msg = stderr?.trim() || stdout?.trim() || 'Linting failed';
+        console.error('[ERROR] TFLint failed:', msg);
+        return res.status(500).type('text/plain').send(msg);
+      }
+      res.type('text/plain').send(stdout);
+    });
+  } catch (e) {
+    console.error('[EXCEPTION] /lint:', e);
+    res.status(500).send('Server error');
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
 
-
-// const express = require('express');
-// const multer = require('multer');
-// const path = require('path');
-// const fs = require('fs');
-// const cors = require('cors');
-// const dotenv = require('dotenv');
-// const { processImageWithGemini } = require('../services/geminiProcessor');
-
-// dotenv.config();
-
-// const app = express();
-// app.use(cors());
-// app.use(express.static('public'));
-
-// const storage = multer.diskStorage({
-//   destination: './uploads/',
-//   filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
-// });
-// const upload = multer({ storage });
-
-// // Utility to sanitize Terraform resource names
-// const sanitizeName = name => name.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
-
-// // Terraform templates for supported components
-// const terraformTemplates = {
-//   "VPC": (comp) => `
-// resource "aws_vpc" "${sanitizeName(comp.name)}" {
-//   cidr_block = "${comp.properties.cidr_block}"
-// }
-// `,
-//   "Internet Gateway": (comp) => `
-// resource "aws_internet_gateway" "${sanitizeName(comp.name)}" {
-//   vpc_id = aws_vpc.${sanitizeName(comp.properties.vpc || 'vpc')}.id
-// }
-// `,
-//   "Subnet": (comp) => `
-// resource "aws_subnet" "${sanitizeName(comp.name)}" {
-//   vpc_id = aws_vpc.${sanitizeName(comp.properties.vpc || 'vpc')}.id
-//   cidr_block = "${comp.properties.cidr_block}"
-// }
-// `,
-//   "EC2 Instances": (comp) => {
-//     const subnetName = sanitizeName(comp.properties.located_in_subnet || 'subnet');
-//     const count = comp.properties.count || 1;
-//     let instances = '';
-//     for (let i = 0; i < count; i++) {
-//       instances += `
-// resource "aws_instance" "${sanitizeName(comp.name)}_${i + 1}" {
-//   ami           = "ami-12345678"
-//   instance_type = "t2.micro"
-//   subnet_id     = aws_subnet.${subnetName}.id
-// }
-// `;
-//     }
-//     return instances;
-//   }
-// };
-
-// app.post('/upload', upload.single('diagram'), async (req, res) => {
-//   try {
-//     console.log('[DEBUG] Received diagram:', req.file.path);
-
-//     const result = await processImageWithGemini(req.file.path);
-//     console.log('[DEBUG] Raw Gemini response:', result);
-
-//     const cleaned = result
-//       .replace(/```terraform/g, '')
-//       .replace(/```json/g, '')
-//       .replace(/```/g, '')
-//       .trim();
-
-//     let parsedJson = null;
-//     let terraformCode = '';
-
-//     try {
-//       parsedJson = JSON.parse(cleaned);
-//       console.log('[DEBUG] Parsed JSON successfully');
-//     } catch {
-//       terraformCode = cleaned;
-//       console.log('[DEBUG] Response is raw Terraform code');
-//     }
-
-//     if (parsedJson) {
-//       console.log('[DEBUG] Generating Terraform code from parsed JSON');
-//       parsedJson.components.forEach(comp => {
-//         const generator = terraformTemplates[comp.type];
-//         if (generator) {
-//           console.log(`[DEBUG] Generating for ${comp.type}: ${comp.name}`);
-//           terraformCode += generator(comp) + '\n';
-//         } else {
-//           console.log(`[DEBUG] No template for component type: ${comp.type}`);
-//         }
-//       });
-//     }
-
-//     const tfDir = path.join(__dirname, '../public/generated');
-//     if (!fs.existsSync(tfDir)) fs.mkdirSync(tfDir, { recursive: true });
-
-//     const tfFilePath = path.join(tfDir, 'generated_from_diagram.tf');
-//     fs.writeFileSync(tfFilePath, terraformCode);
-//     console.log('[DEBUG] Terraform code saved to:', tfFilePath);
-
-//     res.type('text/plain').send(terraformCode);
-
-//   } catch (err) {
-//     console.error('[ERROR] Failed to process image or generate Terraform code:', err);
-//     res.status(500).send('Error generating Terraform code');
-//   }
-// });
-
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
