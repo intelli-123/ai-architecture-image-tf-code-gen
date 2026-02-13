@@ -89,21 +89,24 @@ jobs:
             --project="${GCP_PROJECT_ID}" --quiet || true
         # With redirection ON, pushes/pulls to gcr.io are handled by Artifact Registry.
 
-      # 6) Build & push with Cloud Build (tag = short commit SHA)
-      - name: Build and push image via Cloud Build
-        env:
-          SHORT_SHA: ${{ github.sha }}
+      # 6a) Compute short Git SHA tag
+      - name: Compute image tag (short SHA)
+        id: tag
+        run: echo "TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+
+      # 6b) Configure Docker to use gcloud as credential helper for gcr.io
+      - name: Configure Docker auth for gcr.io
         run: |
           set -euo pipefail
-          SHORT="$(echo "${SHORT_SHA}" | cut -c1-7)"
-          IMAGE_TAG="${SHORT}"
-          FULL_IMAGE="${GCR_HOST}/${GCP_PROJECT_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
+          gcloud auth configure-docker ${GCR_HOST} --quiet
 
-          echo "Building and pushing ${FULL_IMAGE} ..."
-          gcloud builds submit \
-            --project="${GCP_PROJECT_ID}" \
-            --tag "${FULL_IMAGE}" \
-            .
-
-          echo "Pushed ${FULL_IMAGE}"
-          echo "image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+      # 6c) Docker build & push directly to gcr.io (backed by Artifact Registry)
+      - name: Docker build & push (direct)
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${GCR_HOST}/${GCP_PROJECT_ID}/${IMAGE_NAME}:${TAG}"
+          echo "Building ${IMAGE_REF} ..."
+          docker build -t "${IMAGE_REF}" .
+          echo "Pushing ${IMAGE_REF} ..."
+          docker push "${IMAGE_REF}"
+          echo "pushed=${IMAGE_REF}" >> $GITHUB_OUTPUT
