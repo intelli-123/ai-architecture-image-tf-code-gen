@@ -36,7 +36,7 @@ jobs:
         name: Authenticate to Google Cloud (WIF)
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ vars.WIF_POOL_ID }}/providers/${{ vars.WIF_PROVIDER_ID }}
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ env.WIF_POOL_ID }}/providers/${{ env.WIF_PROVIDER_ID }}
           service_account: ${{ env.GCP_SA_EMAIL }}
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
