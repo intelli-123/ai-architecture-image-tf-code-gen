@@ -132,48 +132,89 @@ app.post('/edit', express.json(), async (req, res) => {
   }
 });
 
-// app.get('/lint', async (req, res) => {
-//   const tfFilePath = path.join(__dirname, '../public/generated/generated_from_diagram.tf');
-//   exec(`tflint ${tfFilePath}`, (error, stdout, stderr) => {
-//     if (error) {
-//       console.error('[ERROR] TFLint failed:', stderr);
-//       return res.status(500).send('Linting failed');
-//     }
-//     res.type('text/plain').send(stdout);
-//   });
-// });
-
-
-
 app.get('/lint', async (req, res) => {
   try {
     const moduleDir = path.join(__dirname, '../public/generated');
     const tfFilename = 'generated_from_diagram.tf';
+    const tfFilePath = path.join(moduleDir, tfFilename);
 
-    // Initialize plugins once per container/host (cache will persist). You can
-    // also do this in a build step instead of on each request.
-    // execFile('tflint', ['--chdir', moduleDir, '--init'], (err) => { ... })
+    console.log('[DEBUG /lint] Received lint request.');
+    console.log('[DEBUG /lint] Attempting to lint file:', tfFilePath);
+
+    if (!fs.existsSync(tfFilePath)) {
+      console.warn(`[WARN /lint] Terraform file not found at ${tfFilePath}. Cannot lint.`);
+      return res.status(404).type('application/json').send({
+        status: 'error',
+        message: `Terraform file not found at ${tfFilePath}. Please upload a diagram first.`
+      });
+    }
 
     const args = [
-      '--chdir', moduleDir,    // new way to set working directory (v0.47+)
-      '--format', 'json',      // or 'json' if you prefer
-      '--filter', tfFilename,  // only report issues for this file
+      '--chdir', moduleDir,
+      '--format', 'json',
+      '--filter', tfFilename,
     ];
+
+    console.log('[DEBUG /lint] Executing tflint with arguments:', args.join(' '));
 
     execFile('tflint', args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
-        // TFLint returns non‑zero when it finds issues; decide what your API should return.
-        // If you treat "issues found" as success, you can still return 200 with stdout.
-        // Here we treat CLI errors (not lint findings) as 500.
-        const msg = stderr?.trim() || stdout?.trim() || 'Linting failed';
-        console.error('[ERROR] TFLint failed:', msg);
-        return res.status(500).type('text/plain').send(msg);
+        const errorOutput = stderr?.trim() || stdout?.trim() || `TFLint failed with exit code ${error.code}`;
+        console.error('[ERROR /lint] TFLint execution failed:', errorOutput);
+        return res.status(500).type('application/json').send({
+          status: 'error',
+          message: `TFLint execution error: ${errorOutput}`
+        });
       }
-      res.type('text/plain').send(stdout);
+
+      console.log('[DEBUG /lint] TFLint stdout (raw):', stdout.trim());
+      if (stderr) {
+          console.warn('[WARN /lint] TFLint stderr (non-critical):', stderr.trim());
+      }
+
+      let lintResult;
+      try {
+        lintResult = JSON.parse(stdout);
+      } catch (parseError) {
+        console.error('[ERROR /lint] Failed to parse TFLint JSON output:', parseError);
+        return res.status(500).type('application/json').send({
+          status: 'error',
+          message: 'Failed to parse TFLint output. Output was not valid JSON.',
+          rawOutput: stdout.trim()
+        });
+      }
+
+      const hasIssues = lintResult.issues && lintResult.issues.length > 0;
+      const hasErrors = lintResult.errors && lintResult.errors.length > 0;
+
+      if (hasIssues || hasErrors) {
+        // If there are issues or errors, return them clearly
+        const status = hasErrors ? 'error' : 'warning';
+        const message = hasErrors
+          ? `Linting completed with ${lintResult.errors.length} error(s) and ${lintResult.issues.length} issue(s).`
+          : `Linting completed with ${lintResult.issues.length} issue(s).`;
+
+        console.log(`[INFO /lint] ${message}`);
+        res.status(200).type('application/json').send({
+          status: status,
+          message: message,
+          details: lintResult // Include the full tflint output for detailed client parsing
+        });
+      } else {
+        // If no issues, return a clear success message
+        console.log('[INFO /lint] Linting successfully completed. No issues found.');
+        res.status(200).type('application/json').send({
+          status: 'success',
+          message: 'Successfully completed linting. No issues found.'
+        });
+      }
     });
   } catch (e) {
-    console.error('[EXCEPTION] /lint:', e);
-    res.status(500).send('Server error');
+    console.error('[EXCEPTION /lint] Server error during linting process:', e);
+    res.status(500).type('application/json').send({
+      status: 'error',
+      message: 'Server error during linting process.'
+    });
   }
 });
 
